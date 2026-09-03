@@ -6,11 +6,7 @@ about=アクティブレイヤーのCRSを使って地物を計測し、キャ�
 version=0.1.0
 qgisMinimumVersion=3.0
 author=R.Kobayashi
-repository=
 icon=icon.png
-
-# カテゴリ設定（プラグインメニューのどこに入るか）
-category=Plugins
 experimental=False
 deprecated=False
 repository=https://github.com/nwatanabe-cpu/distance_measurer
