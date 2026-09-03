@@ -1,0 +1,13 @@
+[general]
+name=Simple Distance Measurer (EPSG:6676)
+email=your@email.com
+description=EPSG:6676固定で図面上の距離を計測するツールです。
+about=JGD2011 / 平面直角座標系 第8系に特化した計測プラグイン。
+version=0.1
+qgisMinimumVersion=3.0
+author=R.Kobayashi
+repository=
+icon=icon.png
+
+# カテゴリ設定（プラグインメニューのどこに入るか）
+category=Plugins
