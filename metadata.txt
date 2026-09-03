@@ -1,8 +1,8 @@
 [general]
-name=Simple Distance Measurer (EPSG:6676)
+name=Simple Distance Measurer
 email=your@email.com
-description=EPSG:6676固定で図面上の距離を計測するツールです。
-about=JGD2011 / 平面直角座標系 第8系に特化した計測プラグイン。
+description=レイヤーまたはキャンバスのCRSに対応して距離、面積、ライン長を計測するプラグインです。
+about=アクティブレイヤーのCRSを使って地物を計測し、キャンバスのCRSに合わせて表示します。楕円体はGRS80を使用します。
 version=0.1
 qgisMinimumVersion=3.0
 author=R.Kobayashi

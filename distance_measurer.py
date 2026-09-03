@@ -1,14 +1,12 @@
 from qgis.gui import QgsMapToolEmitPoint, QgsRubberBand, QgsMapToolIdentify
 from qgis.core import (
-    QgsDistanceArea, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
+    QgsDistanceArea, QgsCoordinateTransform,
     QgsProject, QgsPointXY, QgsWkbTypes, QgsRectangle, QgsFeatureRequest, QgsGeometry
 )
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QAction, QLabel
 from qgis.PyQt.QtGui import QIcon, QColor
 import os
-
-TARGET_CRS = QgsCoordinateReferenceSystem("EPSG:6676")
 
 # --- 共通のラベル管理関数 ---
 def get_display_label(canvas):
@@ -26,18 +24,15 @@ def get_display_label(canvas):
     label.hide()
     return label
 
-# --- 座標変換ヘルパー ---
-def make_transform(canvas):
-    """マップCRS → EPSG:6676 の変換オブジェクトを返す"""
-    map_crs = canvas.mapSettings().destinationCrs()
-    return QgsCoordinateTransform(map_crs, TARGET_CRS, QgsProject.instance())
-
-def to_6676(point, transform):
-    """QgsPointXY をEPSG:6676に変換して返す"""
-    try:
-        return transform.transform(point)
-    except Exception:
-        return point
+def create_distance_area(source_crs):
+    """入力CRSに合わせた測地計算オブジェクトを作成する"""
+    distance_area = QgsDistanceArea()
+    distance_area.setSourceCrs(
+        source_crs,
+        QgsProject.instance().transformContext()
+    )
+    distance_area.setEllipsoid('GRS80')
+    return distance_area
 
 # ─────────────────────────────────────────────
 # 距離計測ツール（左クリックで折れ線、Escで1点戻る、右クリックでリセット）
@@ -55,20 +50,15 @@ class CustomDistanceTool(QgsMapToolEmitPoint):
         self.rubber_band.setWidth(2)
 
         self.map_points = []    # マップ座標（描画用）
-        self.proj_points = []   # EPSG:6676座標（計算用）
-
-        self.da = QgsDistanceArea()
-        self.da.setSourceCrs(TARGET_CRS, QgsProject.instance().transformContext())
-        self.da.setEllipsoid('GRS80')
+        self.da = create_distance_area(
+            self.canvas.mapSettings().destinationCrs()
+        )
 
     def canvasPressEvent(self, e):
         if e.button() == Qt.LeftButton:
             map_pt = QgsPointXY(self.toMapCoordinates(e.pos()))
-            tr = make_transform(self.canvas)
-            proj_pt = to_6676(map_pt, tr)
 
             self.map_points.append(map_pt)
-            self.proj_points.append(proj_pt)
             self.rubber_band.addPoint(map_pt)
             self.label.show()
 
@@ -79,7 +69,6 @@ class CustomDistanceTool(QgsMapToolEmitPoint):
         if e.key() == Qt.Key_Escape:
             if self.map_points:
                 self.map_points.pop()
-                self.proj_points.pop()
                 # ラバーバンドを再描画
                 self.rubber_band.reset(QgsWkbTypes.LineGeometry)
                 for p in self.map_points:
@@ -87,7 +76,7 @@ class CustomDistanceTool(QgsMapToolEmitPoint):
                 if not self.map_points:
                     self.label.hide()
                 else:
-                    self._update_label(self.proj_points)
+                    self._update_label(self.map_points)
             return
         super().keyPressEvent(e)
 
@@ -95,8 +84,6 @@ class CustomDistanceTool(QgsMapToolEmitPoint):
         if not self.map_points:
             return
         curr_map = QgsPointXY(self.toMapCoordinates(e.pos()))
-        tr = make_transform(self.canvas)
-        curr_proj = to_6676(curr_map, tr)
 
         # ラバーバンド再描画（確定点 + マウス現在位置）
         self.rubber_band.reset(QgsWkbTypes.LineGeometry)
@@ -104,11 +91,14 @@ class CustomDistanceTool(QgsMapToolEmitPoint):
             self.rubber_band.addPoint(p)
         self.rubber_band.addPoint(curr_map)
 
-        temp = self.proj_points + [curr_proj]
+        temp = self.map_points + [curr_map]
         self._update_label(temp)
 
     def _update_label(self, pts):
         if len(pts) >= 2:
+            self.da = create_distance_area(
+                self.canvas.mapSettings().destinationCrs()
+            )
             dist = self.da.measureLine(pts)
             self.label.setText(f"距離: {dist:.2f} m")
         else:
@@ -117,7 +107,6 @@ class CustomDistanceTool(QgsMapToolEmitPoint):
 
     def reset(self):
         self.map_points = []
-        self.proj_points = []
         self.rubber_band.reset(QgsWkbTypes.LineGeometry)
         self.label.hide()
 
@@ -150,9 +139,7 @@ class CustomAreaTool(QgsMapToolIdentify):
         self.rect_rubber_band.setWidth(1)
         self.start_point = None
 
-        self.da = QgsDistanceArea()
-        self.da.setSourceCrs(TARGET_CRS, QgsProject.instance().transformContext())
-        self.da.setEllipsoid('GRS80')
+        self.da = None
 
     def canvasPressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -198,8 +185,12 @@ class CustomAreaTool(QgsMapToolIdentify):
         if not (e.modifiers() & Qt.ControlModifier):
             self.selected_info = {}
 
-        # レイヤーCRS → EPSG:6676 変換（面積計算用）
-        tr = QgsCoordinateTransform(layer_crs, TARGET_CRS, QgsProject.instance())
+        self.da = create_distance_area(layer_crs)
+        map_tr = QgsCoordinateTransform(
+            layer_crs,
+            map_crs,
+            QgsProject.instance()
+        )
 
         request = QgsFeatureRequest().setFilterRect(layer_rect)
         for feat in layer.getFeatures(request):
@@ -208,11 +199,13 @@ class CustomAreaTool(QgsMapToolIdentify):
             if fid in self.selected_info:
                 del self.selected_info[fid]
             else:
-                # ジオメトリをEPSG:6676に変換してから面積計算
-                geom_proj = QgsGeometry(geom)
-                geom_proj.transform(tr)
-                area = self.da.measureArea(geom_proj)
-                self.selected_info[fid] = {'area': area, 'geom': geom}  # 表示用geomはマップ座標のまま
+                area = self.da.measureArea(geom)
+                display_geom = QgsGeometry(geom)
+                try:
+                    display_geom.transform(map_tr)
+                except Exception:
+                    display_geom = geom
+                self.selected_info[fid] = {'area': area, 'geom': display_geom}
 
         self.rect_rubber_band.hide()
         self.start_point = None
@@ -269,9 +262,7 @@ class CustomLineTool(QgsMapToolIdentify):
         self.rect_rubber_band.setWidth(1)
         self.start_point = None
 
-        self.da = QgsDistanceArea()
-        self.da.setSourceCrs(TARGET_CRS, QgsProject.instance().transformContext())
-        self.da.setEllipsoid('GRS80')
+        self.da = None
 
     def canvasPressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -317,8 +308,12 @@ class CustomLineTool(QgsMapToolIdentify):
         if not (e.modifiers() & Qt.ControlModifier):
             self.selected_info = {}
 
-        # レイヤーCRS → EPSG:6676 変換（延長計算用）
-        tr = QgsCoordinateTransform(layer_crs, TARGET_CRS, QgsProject.instance())
+        self.da = create_distance_area(layer_crs)
+        map_tr = QgsCoordinateTransform(
+            layer_crs,
+            map_crs,
+            QgsProject.instance()
+        )
 
         request = QgsFeatureRequest().setFilterRect(layer_rect)
         for feat in layer.getFeatures(request):
@@ -328,11 +323,13 @@ class CustomLineTool(QgsMapToolIdentify):
                 # 既選択ならトグルで解除
                 del self.selected_info[fid]
             else:
-                # ジオメトリをEPSG:6676に変換してから延長計算
-                geom_proj = QgsGeometry(geom)
-                geom_proj.transform(tr)
-                length = self.da.measureLength(geom_proj)
-                self.selected_info[fid] = {'length': length, 'geom': geom}  # 表示用geomはマップ座標のまま
+                length = self.da.measureLength(geom)
+                display_geom = QgsGeometry(geom)
+                try:
+                    display_geom.transform(map_tr)
+                except Exception:
+                    display_geom = geom
+                self.selected_info[fid] = {'length': length, 'geom': display_geom}
 
         self.rect_rubber_band.hide()
         self.start_point = None
